@@ -102,32 +102,37 @@ async with client.aio.live.connect(model=MODEL, config=config) as session:
 ### 01 — Audio Streaming
 **`01_audio_streaming.ipynb`**
 
-Digs into the audio layer: formats, WAV handling, and simulated microphone streaming.
+**Core capability proved**: The Live API accepts audio from *any* source — not just a live microphone. This notebook answers the three questions every developer asks when they first try to send audio.
 
-| Demo | What happens |
-|------|-------------|
-| Chord to Gemini | Build a 4-tone chord (261+329+392+523 Hz), stream it, get a response |
-| WAV workflow | Generate a 44.1 kHz WAV, inspect RIFF headers, resample to 16 kHz, send |
-| Chunked streaming | Split 4 seconds of audio into 512-sample chunks, send with real-time pacing |
+| Demo | Developer question it answers | Real-world use case |
+|------|------------------------------|---------------------|
+| Chord to Gemini | "Can I send audio that isn't human speech?" | Music apps, sound classification, audio QA pipelines |
+| WAV workflow | "I have a .wav file at 44.1 kHz — can I send it?" | Batch processing recorded calls, podcasts, meetings |
+| Chunked streaming | "How do I wire up a live microphone?" | Voice assistants, real-time call agents, live transcription |
 
-**Audio format cheat sheet**:
+The chunked streaming demo is the most important: it shows the **exact production pattern** for a microphone. Real mic callbacks deliver 512 samples at a time (~32 ms). The demo simulates this with a real-time pacing delay — swap in your actual mic buffer and it works identically.
+
+**The one rule that matters most** — always stream in small chunks. A single large blob causes a `1007 Precondition failed` error:
 ```python
-# Input to Gemini
-mime_type = "audio/pcm;rate=16000"   # PCM16, 16 kHz, mono
-blob = types.Blob(data=pcm_bytes, mime_type=mime_type)
+# ❌ Fails for audio > a few KB
+await session.send_realtime_input(audio=types.Blob(data=all_pcm_bytes, ...))
 
-# Always send in chunks — single large blobs cause 1007 errors
+# ✅ Stream in 512-sample chunks — matches real mic callback size
 CHUNK_SAMPLES = 512
 for i in range(0, len(pcm_bytes), CHUNK_SAMPLES * 2):
     await session.send_realtime_input(
-        audio=types.Blob(data=pcm_bytes[i:i+CHUNK_SAMPLES*2], mime_type=mime_type)
+        audio=types.Blob(data=pcm_bytes[i:i+CHUNK_SAMPLES*2],
+                         mime_type="audio/pcm;rate=16000")
     )
-
-# Output from Gemini
-# resp.data → PCM16 @ 24 kHz, play with:
-arr = np.frombuffer(resp.data, dtype=np.int16).astype(np.float32) / 32768.0
-IPython.display.Audio(arr, rate=24000)
 ```
+
+**Audio format**:
+```
+Input  → PCM16, 16 kHz, mono  (mime: "audio/pcm;rate=16000")
+Output ← PCM16, 24 kHz, mono  (resp.data)
+```
+
+If your source file is at a different sample rate (44.1 kHz WAV, 48 kHz phone audio), resample before sending — the notebook shows how with numpy in ~5 lines.
 
 **VAD and synthetic audio**: Gemini's Voice Activity Detection only triggers on speech-like audio. For synthetic tones, disable it and bracket manually:
 ```python
